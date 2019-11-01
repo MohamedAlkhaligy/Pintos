@@ -242,7 +242,7 @@ timer_interrupt (struct intr_frame *args UNUSED)
 		} else break;
 	}
 	
-	// Unblock all threads in ready list according to their priority.
+	// Unblock all treads in ready list according to their priority.
 	while (!list_empty(&ready_proprity_threads)) {
 		struct list_elem *list_tail = list_pop_back(&ready_proprity_threads);
 		thread_unblock(list_entry(list_tail, struct thread, elem));
