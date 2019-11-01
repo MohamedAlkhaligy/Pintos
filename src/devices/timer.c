@@ -34,7 +34,7 @@ static void real_time_delay (int64_t num, int32_t denom);
 
 // list of blocked threads due to timer_sleep().
 static struct list blocked_threads;
-static struct list ready_proprity_threads;
+static struct list ready_priority_threads;
 
 /* Sets up the timer to interrupt TIMER_FREQ times per second,
    and registers the corresponding interrupt. */
@@ -45,7 +45,7 @@ timer_init (void)
 	
 	// Initialize lists.
 	list_init (&blocked_threads);
-	list_init (&ready_proprity_threads);
+	list_init (&ready_priority_threads);
 	
 	intr_register_ext (0x20, timer_interrupt, "8254 Timer");
 }
@@ -100,7 +100,7 @@ timer_elapsed (int64_t then)
 // ------------------------------------------------------------------------------------------------------------------------------------ <
 
 /* Compare the sleep_ticks of two threads, such that return true if a's ticks 
-	are greater than b's, otherwise return false. */
+	are less than b's, otherwise return false. */
 bool compare_ticks (const struct list_elem *a, const struct list_elem *b, void *aux) {
 	struct thread *thread_a = list_entry(a, struct thread, elem);
 	struct thread *thread_b = list_entry(b, struct thread, elem);
@@ -219,7 +219,7 @@ bool compare_priority(const struct list_elem *a, const struct list_elem *b, void
 }
 
 /* Timer interrupt handler. */
-// Wake up a thread that finished its sleep ticks.
+// Wake up a thread that finished its sleep ticks according to its priority.
 static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
@@ -235,16 +235,17 @@ timer_interrupt (struct intr_frame *args UNUSED)
 	  struct thread *thread_front = list_entry(front, struct thread, elem);
 		
 	  // If the first element's sleep-ticks in the sorted list is less than the timer_ticks then remove it up.
-	  // and insert it to the ready priority list
+	  // and insert it to the ready priority list and continue, otherwise the rest are greater, hence, break.
 	  if (timer_ticks() >= thread_front -> sleep_ticks) {
 		  list_pop_front(&blocked_threads);
-		  list_insert_ordered(&ready_proprity_threads, &thread_front -> elem, compare_priority, 0); 
+		  list_insert_ordered(&ready_priority_threads, &thread_front -> elem, compare_priority, 0); 
 		} else break;
 	}
 	
+	
 	// Unblock all treads in ready list according to their priority.
-	while (!list_empty(&ready_proprity_threads)) {
-		struct list_elem *list_tail = list_pop_back(&ready_proprity_threads);
+	while (!list_empty(&ready_priority_threads)) {
+		struct list_elem *list_tail = list_pop_back(&ready_priority_threads);
 		thread_unblock(list_entry(list_tail, struct thread, elem));
 	}
   
