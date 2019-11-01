@@ -133,7 +133,6 @@ timer_sleep (int64_t ticks)
 	
 		// Enable interrupt.
 		intr_set_level(old_level);
-		printf("<SLEEP>");
 	}
 }
 
@@ -241,7 +240,6 @@ timer_interrupt (struct intr_frame *args UNUSED)
 		  list_insert_ordered(&ready_priority_threads, &thread_front -> elem, compare_priority, 0); 
 		} else break;
 	}
-	
 	
 	// Unblock all treads in ready list according to their priority.
 	while (!list_empty(&ready_priority_threads)) {
