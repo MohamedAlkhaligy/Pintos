@@ -196,6 +196,10 @@ thread_create (const char *name, int priority,
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
 
+
+  enum intr_level old_level;
+  old_level = intr_disable();
+
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
   kf->eip = NULL;
@@ -210,6 +214,8 @@ thread_create (const char *name, int priority,
   sf = alloc_frame (t, sizeof *sf);
   sf->eip = switch_entry;
   sf->ebp = 0;
+
+  intr_set_level(old_level);
 
   /* Add to run queue. */
   thread_unblock (t);
@@ -369,6 +375,7 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
+  
 	if (thread_current() -> priority == thread_current() -> actual_priority) {
 		thread_current() -> priority = new_priority;
 	} else {
@@ -550,8 +557,12 @@ next_thread_to_run (void)
 {
   if (list_empty (&ready_list))
     return idle_thread;
-  else
+  else {
+    if (thread_mlfqs) { 
+      return list_entry (list_max(&ready_list, compare_priority_prime, NULL),struct thread, elem);
+    }
     return list_entry (list_pop_front (&ready_list), struct thread, elem);
+  }
 }
 
 /* Completes a thread switch by activating the new thread's page

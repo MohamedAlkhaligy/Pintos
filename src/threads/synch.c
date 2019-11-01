@@ -74,7 +74,7 @@ sema_down (struct semaphore *sema)
   old_level = intr_disable ();
   while (sema->value == 0) 
     {
-      list_push_back (&sema->waiters, &thread_current ()->elem);
+      list_insert_ordered (&sema->waiters, &thread_current ()->elem, compare_priority_synch, 0);
       thread_block ();
     }
   sema->value--;
@@ -119,10 +119,10 @@ sema_up (struct semaphore *sema)
   ASSERT (sema != NULL);
 
   old_level = intr_disable ();
-  if (!list_empty (&sema->waiters)) 
-    thread_unblock (list_entry (list_pop_front (&sema->waiters),
-                                struct thread, elem));
   sema->value++;
+  if (!list_empty (&sema->waiters)) 
+    thread_unblock (list_entry (list_pop_back (&sema->waiters),
+                                struct thread, elem));
   intr_set_level (old_level);
 }
 
@@ -187,6 +187,13 @@ lock_init (struct lock *lock)
   sema_init (&lock->semaphore, 1);
 }
 
+// =================================================================
+
+void donate(struct thread *donor, struct thread *donee) {
+  donee -> has_donation = true;
+  donee -> priority = donor -> priority;
+}
+
 /* Acquires LOCK, sleeping until it becomes available if
    necessary.  The lock must not already be held by the current
    thread.
@@ -202,9 +209,27 @@ lock_acquire (struct lock *lock)
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
 
+  // The current thread that did not acquire the lock is to 
+  // donate its priority to the elements that aquire the lock
+  // with low priority.
+  enum intr_level old_level;
+  old_level = intr_disable ();
+
+  if (&lock -> semaphore.value <= 0 && lock -> holder -> priority
+      < thread_current() -> priority) {
+        donate(thread_current(), &lock -> holder);
+  }
+
+  intr_set_level (old_level);
+
   sema_down (&lock->semaphore);
+
+  thread_current() -> wait_lock = NULL;
+  //list_push_back(&thread_current() -> donor_threads, &lock -> lock_element);
   lock->holder = thread_current ();
 }
+
+// =================================================================
 
 /* Tries to acquires LOCK and returns true if successful or false
    on failure.  The lock must not already be held by the current
@@ -236,6 +261,16 @@ lock_release (struct lock *lock)
 {
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
+
+  enum intr_level old_level;
+  old_level = intr_disable ();
+
+  if (lock -> holder -> has_donation) {
+    lock -> holder -> priority = lock -> holder -> actual_priority;
+    lock -> holder -> has_donation = false;
+  }
+
+  intr_set_level (old_level);
 
   lock->holder = NULL;
   sema_up (&lock->semaphore);

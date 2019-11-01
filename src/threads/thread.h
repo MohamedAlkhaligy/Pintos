@@ -94,6 +94,8 @@ struct thread
 	int64_t  sleep_ticks;				/* How long the thread sleeps. */
 	int nice;
 	int recent_cpu;
+  struct lock *wait_lock;
+  struct list donor_threads;
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
