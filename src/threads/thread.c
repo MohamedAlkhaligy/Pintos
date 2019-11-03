@@ -106,6 +106,7 @@ thread_init (void)
   init_thread (initial_thread, "main", PRI_DEFAULT);
   initial_thread->status = THREAD_RUNNING;
   initial_thread->recent_cpu = 1;
+  initial_thread->donation_depth = 0;
   initial_thread->tid = allocate_tid ();
 }
 
@@ -247,7 +248,7 @@ thread_block (void)
 bool compare_priority_prime(const struct list_elem *a, const struct list_elem *b, void *aux) {
 	struct thread *thread_a = list_entry (a, struct thread, elem);
 	struct thread *thread_b = list_entry (b, struct thread, elem);
-	return (thread_a -> priority > thread_b -> priority);
+	return (thread_a -> priority <= thread_b -> priority);
 }
 
 /* Transitions a blocked thread T to the ready-to-run state.
@@ -375,16 +376,20 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  
-	if (thread_current() -> priority == thread_current() -> actual_priority) {
-		thread_current() -> priority = new_priority;
-	} else {
-		if (new_priority > thread_current() -> priority) {
-			thread_current() -> priority = new_priority;
-		}
-	}
-	
+  if(new_priority == thread_current()->priority) return;
+
+  thread_current() -> priority = new_priority;
 	thread_current () -> actual_priority = new_priority;
+  if(thread_current()->donation_depth < 8 && thread_current()->donee != NULL 
+      && thread_current()->priority < thread_current()->donee->priority){
+
+      struct thread *pointer = thread_current();
+        for (; pointer -> donee != NULL ;) {
+          pointer -> donee -> priority = pointer -> priority;
+          pointer = pointer -> donee;
+        }
+  }
+
 	if (!list_empty(&ready_list)) {
 		struct list_elem *back = list_back(&ready_list);
 		struct thread *back_thread = list_entry(back, struct thread, elem);
@@ -396,7 +401,7 @@ thread_set_priority (int new_priority)
 int
 thread_get_priority (void) 
 {
-  return thread_current ()->priority;
+  return thread_current()->priority;
 }
 
 
@@ -558,10 +563,12 @@ next_thread_to_run (void)
   if (list_empty (&ready_list))
     return idle_thread;
   else {
+    /*
     if (thread_mlfqs) { 
       return list_entry (list_max(&ready_list, compare_priority_prime, NULL),struct thread, elem);
     }
-    return list_entry (list_pop_front (&ready_list), struct thread, elem);
+    */
+    return list_entry (list_pop_back (&ready_list), struct thread, elem);
   }
 }
 
