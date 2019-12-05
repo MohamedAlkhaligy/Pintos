@@ -19,11 +19,11 @@
    Used to detect stack overflow.  See the big comment at the top
    of thread.h for details. */
 #define THREAD_MAGIC 0xcd6abf4b
+#define DEBUG false      
 
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
 static struct list ready_list;
-
 
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
@@ -140,7 +140,7 @@ void thread_tick(void)
 /* Prints thread statistics. */
 void thread_print_stats(void)
 {
-      printf("Thread: %lld idle ticks, %lld kernel ticks, %lld user ticks\n",
+      printf("##Thread: %lld idle ticks, %lld kernel ticks, %lld user ticks\n",
              idle_ticks, kernel_ticks, user_ticks);
 }
 
@@ -167,7 +167,9 @@ tid_t thread_create(const char *name, int priority,
       struct switch_entry_frame *ef;
       struct switch_threads_frame *sf;
       tid_t tid;
+      struct thread_child* tdchild;
 
+      enum intr_level old_level;
       ASSERT(function != NULL);
 
       /* Allocate thread. */
@@ -177,11 +179,7 @@ tid_t thread_create(const char *name, int priority,
 
       /* Initialize thread. */
       init_thread(t, name, priority);
-      tid = t->tid = allocate_tid();
-      //############
-      t->parent = thread_current();
-      
-      //$$$$$$$$$$$$
+      tid  = t->tid = allocate_tid();
 
       /* Stack frame for kernel_thread(). */
       kf = alloc_frame(t, sizeof *kf);
@@ -197,6 +195,23 @@ tid_t thread_create(const char *name, int priority,
       sf = alloc_frame(t, sizeof *sf);
       sf->eip = switch_entry;
       sf->ebp = 0;
+
+      //############
+      t->parent = thread_current();
+      tdchild = palloc_get_page(PAL_USER|PAL_ZERO);
+      tdchild->tid = t->tid;
+      tdchild->exit_status = -1;
+      tdchild->status= THREAD_READY;
+      list_push_back(&thread_current()->children, &tdchild->child_elem);
+      t->child_info = tdchild;
+      if (DEBUG)
+      {
+            printf("##%s is parent of %s\n", thread_current()->name, name);
+            printf("##thread id: %d\n", t->tid);
+            struct thread *f = list_entry(&t->elem_child, struct thread, elem_child);
+            printf("##%s its address is %p: \n", name, f);
+      }
+      //$$$$$$$$$$$$
 
       /* Add to run queue. */
       thread_unblock(t);
@@ -276,11 +291,18 @@ tid_t thread_tid(void)
    returns to the caller. */
 void thread_exit(void)
 {
+      if(DEBUG) printf("Enter thread exit\n");
       ASSERT(!intr_context());
+      struct thread_child* tdchild = thread_current()->child_info;
+      if(DEBUG) printf("get tdchild\n");
 #ifdef USERPROG
       process_exit();
 #endif
 
+      if(DEBUG) printf("process_exit() executed\n");
+      tdchild->exit_status = thread_current()->exit_status;
+      tdchild->status = THREAD_DYING;
+      if(DEBUG) printf("tdchild set values\n");
       /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
@@ -454,10 +476,14 @@ init_thread(struct thread *t, const char *name, int priority)
       t->stack = (uint8_t *)t + PGSIZE;
       t->priority = priority;
       t->magic = THREAD_MAGIC;
+
       t->exit_status = -1;
-      
       sema_init(&t->wait_child, 0);
-      
+      sema_init(&t->child_loaded, 0);
+      t->exec_proc = false;
+      t->loaded = false;
+      list_init(&t->children);
+
       old_level = intr_disable();
       list_push_back(&all_list, &t->allelem);
       intr_set_level(old_level);
@@ -547,7 +573,7 @@ schedule(void)
 {
       struct thread *cur = running_thread();
       struct thread *next = next_thread_to_run();
-      struct thread *prev = NULL;   
+      struct thread *prev = NULL;
 
       ASSERT(intr_get_level() == INTR_OFF);
       ASSERT(cur->status != THREAD_RUNNING);

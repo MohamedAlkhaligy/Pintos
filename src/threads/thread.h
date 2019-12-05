@@ -26,6 +26,16 @@ typedef int tid_t;
 #define PRI_MAX 63                      /* Highest priority. */
 
 
+/*
+
+ */
+struct thread_child{
+  tid_t tid;
+  int exit_status;
+  enum thread_status status;
+  struct list_elem child_elem;
+};
+
 /* A kernel thread or user process.
 
    Each thread structure is stored in its own 4 kB page.  The
@@ -93,10 +103,22 @@ struct thread
     struct list_elem allelem;           /* List element for all threads list. */
     int64_t  sleep_ticks;				        /* How long the thread sleeps. */
 
+
     struct thread * parent;
-    struct semaphore  wait_child; 
+    struct semaphore  wait_child;
+
+    struct list_elem elem_child;
+
+    /* exec system call helper members*/
+    bool exec_proc;
+    bool loaded;
+    struct semaphore child_loaded;
+
     int exit_status;
-    
+
+    struct list children;
+
+    struct thread_child* child_info;    /* Info for waiting parent. */ 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
@@ -109,6 +131,8 @@ struct thread
 
     unsigned magic;                     /* Detects stack overflow. */
   };
+
+
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.

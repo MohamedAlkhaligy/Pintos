@@ -18,6 +18,8 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
+#include <list.h>
+
 #define DEBUG false
 #define DEBUGw false
 
@@ -35,7 +37,7 @@ tid_t process_execute(const char *file_name)
       char *save_ptr;
 
       if (DEBUG)
-            printf("enter process execute\n");
+            printf("##enter process execute\n");
       /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
       fn_copy = palloc_get_page(0);
@@ -46,7 +48,7 @@ tid_t process_execute(const char *file_name)
       /* pass the correct file name*/
       file_name = strtok_r(file_name, " ", &save_ptr);
       if (DEBUG)
-            printf("file_name : %s\n", file_name);
+            printf("##file_name : %s\n", file_name);
       /* Create a new thread to execute FILE_NAME. */
       tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
       if (tid == TID_ERROR)
@@ -64,7 +66,7 @@ start_process(void *file_name_)
       bool success;
 
       if (DEBUG)
-            printf("enter start process\n");
+            printf("##enter start process\n");
 
       /* Initialize interrupt frame and load executable. */
       memset(&if_, 0, sizeof if_);
@@ -73,15 +75,24 @@ start_process(void *file_name_)
       if_.eflags = FLAG_IF | FLAG_MBS;
       success = load(file_name, &if_.eip, &if_.esp);
 
+      if (thread_current()->parent->exec_proc == true)
+      {
+            sema_up(&thread_current()->parent->child_loaded);
+      }
+
       /* If load failed, quit. */
       palloc_free_page(file_name);
       if (!success)
+      {
             thread_exit();
-            if (DEBUG)
-            {
-                  printf("starting process : %x\n", if_.esp);
-            }
-            
+      }
+
+      thread_current()->loaded = true;
+      if (DEBUG)
+      {
+            printf("##starting process : %p\n", if_.esp);
+      }
+
       /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -106,14 +117,45 @@ start_process(void *file_name_)
    does nothing. */
 int process_wait(tid_t child_tid UNUSED)
 {
-      int status = -1;
-      if(DEBUGw)printf("parent wait\n");
+      int exit_status = -1;
+      if (DEBUGw)
+            printf("##process wait\n");
+      bool is_child = false;
+      struct thread *parent = thread_current();
+      struct list *children = &parent->children;
+      struct thread_child *child;
+      int j = 1;
+      if (DEBUGw)
+            printf("##child id to be found : %d\n", child_tid);
+      for (struct list_elem *e = list_begin(children); e != list_end(children);
+           e = list_next(e))
+      {
+            struct thread_child *f = list_entry(e, struct thread_child, child_elem);
+            if (f != NULL && f->tid == child_tid)
+            {
+                  if (DEBUGw)
+                        printf("##thread %p , id : %d is the child to wait\n", f, f->tid);
+                  is_child = true;
+                  child = f;
+                  break;
+            }
+            j++;
+      }
+      if (!is_child)
+            return exit_status;
+      list_remove(&child->child_elem);
+      if (child->status != THREAD_DYING)
+      {
+            if (DEBUGw)
+                  printf("##%s is waiting %d\n", parent->name, child->tid);
+            sema_down(&thread_current()->wait_child);
+      }
 
-      /* parent wait his child*/
-      sema_down(&thread_current()->wait_child);
-
-      if(DEBUGw)printf("parent continue\n");
-      return status;
+      if (DEBUGw)
+            printf("##%s continue\n", parent->name);
+      exit_status = child->exit_status;
+      palloc_free_page(child);
+      return exit_status;
 }
 
 /* Free the current process's resources. */
@@ -121,7 +163,7 @@ void process_exit(void)
 {
       struct thread *cur = thread_current();
       uint32_t *pd;
-      //printf("process_exit: thread name : %s\n", thread_current()->name);
+      //printf("##process_exit: thread name : %s\n", thread_current()->name);
       /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
       pd = cur->pagedir;
@@ -138,10 +180,14 @@ void process_exit(void)
             pagedir_activate(NULL);
             pagedir_destroy(pd);
       }
+
+      printf("%s: exit(%d)\n", cur->name, cur->exit_status);
+
       if (cur->parent != NULL && cur->parent->wait_child.value <= 0)
       {
             sema_up(&cur->parent->wait_child);
       }
+      if(DEBUGw) printf("sema up\n");
 }
 
 /* Sets up the CPU for running user code in the current
@@ -242,7 +288,7 @@ bool load(const char *file_name, void (**eip)(void), void **esp)
       int i;
 
       if (DEBUG)
-            printf("enter load\n");
+            printf("##enter load\n");
 
       /* Allocate and activate page directory. */
       t->pagedir = pagedir_create();
@@ -326,8 +372,6 @@ bool load(const char *file_name, void (**eip)(void), void **esp)
       if (!setup_stack(esp, file_name))
             goto done;
 
-     
-      
       /* Start address. */
       *eip = (void (*)(void))ehdr.e_entry;
 
@@ -453,7 +497,7 @@ static bool
 setup_stack(void **esp, char *cmd_line)
 {
       if (DEBUG)
-            printf("enter setup stack\n");
+            printf("##enter setup stack\n");
       uint8_t *kpage;
       bool success = false;
 
@@ -466,7 +510,7 @@ setup_stack(void **esp, char *cmd_line)
             else
                   palloc_free_page(kpage);
       }
-      
+
       /*placing arguments in stack 'esp'*/
 
       char *tokens[50];
@@ -481,7 +525,7 @@ setup_stack(void **esp, char *cmd_line)
             tokens[cnt++] = token;
       }
 
-      //if(DEBUG)printf("%x\n",stack);
+      //if(DEBUG)printf("##%x\n",stack);
       for (int i = cnt - 1; i >= 0; i--)
       {
             int len = strlen(tokens[i]) + 1;
@@ -513,7 +557,7 @@ setup_stack(void **esp, char *cmd_line)
       if (DEBUG)
       {
             ln = (char *)*esp - stack;
-            printf("%d\n", ln);
+            printf("##%d\n", ln);
             hex_dump((uintptr_t)stack, stack, sizeof(char) * ln, true);
       }
 
