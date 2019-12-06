@@ -72,6 +72,9 @@ static void schedule(void);
 void thread_schedule_tail(struct thread *prev);
 static tid_t allocate_tid(void);
 
+/*initialize the thread_child member in child for parent purposes*/
+static void init_thread_child(struct thread_child * tdchild, struct thread * t);
+
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
    general and it is possible in this case only because loader.S
@@ -196,21 +199,14 @@ tid_t thread_create(const char *name, int priority,
       sf->eip = switch_entry;
       sf->ebp = 0;
 
+
       //############
       t->parent = thread_current();
+
       tdchild = palloc_get_page(PAL_USER|PAL_ZERO);
-      tdchild->tid = t->tid;
-      tdchild->exit_status = -1;
-      tdchild->status= THREAD_READY;
-      list_push_back(&thread_current()->children, &tdchild->child_elem);
+      init_thread_child(tdchild,t);
+      list_push_back(&t->parent->children, &tdchild->child_elem);
       t->child_info = tdchild;
-      if (DEBUG)
-      {
-            printf("##%s is parent of %s\n", thread_current()->name, name);
-            printf("##thread id: %d\n", t->tid);
-            struct thread *f = list_entry(&t->elem_child, struct thread, elem_child);
-            printf("##%s its address is %p: \n", name, f);
-      }
       //$$$$$$$$$$$$
 
       /* Add to run queue. */
@@ -219,6 +215,12 @@ tid_t thread_create(const char *name, int priority,
       return tid;
 }
 
+static void init_thread_child(struct thread_child * tdchild, struct thread * t){
+     
+      tdchild->tid = t->tid;
+      tdchild->exit_status = -1;
+      tdchild->status= THREAD_READY;
+}
 /* Puts the current thread to sleep.  It will not be scheduled
    again until awoken by thread_unblock().
 
@@ -601,3 +603,25 @@ allocate_tid(void)
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof(struct thread, stack);
+
+
+/* Searching for the child that has tid and return
+   thread_child if exits, NULL otherwise.
+*/
+struct thread_child * get_thread_child(tid_t tid){
+      struct list * children = &thread_current()->children;
+      for (struct list_elem *e = list_begin(children); e != list_end(children);
+           e = list_next(e))
+      {
+            struct thread_child *f = list_entry(e, struct thread_child, child_elem);
+            if (f != NULL && f->tid == tid)
+            {
+                  if (DEBUG)
+                        printf("##thread %p , id : %d is the child to wait\n", f, f->tid);
+                  return f;
+
+            }
+      }
+      return NULL;
+
+}

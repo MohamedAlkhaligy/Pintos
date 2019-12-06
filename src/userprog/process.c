@@ -35,6 +35,7 @@ tid_t process_execute(const char *file_name)
       char *fn_copy;
       tid_t tid;
       char *save_ptr;
+      char *exact_name;
 
       if (DEBUG)
             printf("##enter process execute\n");
@@ -43,16 +44,29 @@ tid_t process_execute(const char *file_name)
       fn_copy = palloc_get_page(0);
       if (fn_copy == NULL)
             return TID_ERROR;
+      
+      exact_name = palloc_get_page(0);
+      if (exact_name == NULL)
+            return TID_ERROR;
+
       strlcpy(fn_copy, file_name, PGSIZE);
 
+      strlcpy(exact_name, file_name, PGSIZE);
+
+      if (DEBUG)
+            printf("before get ##file_name : %s\n", file_name);
       /* pass the correct file name*/
-      file_name = strtok_r(file_name, " ", &save_ptr);
+      exact_name = strtok_r(exact_name, " ", &save_ptr);
       if (DEBUG)
             printf("##file_name : %s\n", file_name);
+      
       /* Create a new thread to execute FILE_NAME. */
-      tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
-      if (tid == TID_ERROR)
+      tid = thread_create(exact_name, PRI_DEFAULT, start_process, fn_copy);
+      if (tid == TID_ERROR){
             palloc_free_page(fn_copy);
+            palloc_free_page(exact_name);
+      }
+
       return tid;
 }
 
@@ -75,19 +89,24 @@ start_process(void *file_name_)
       if_.eflags = FLAG_IF | FLAG_MBS;
       success = load(file_name, &if_.eip, &if_.esp);
 
+      /* If load failed, quit. */
+      palloc_free_page(file_name);
+      if (!success)
+      {
+            thread_current()->parent->loaded = false;
+            if (thread_current()->parent->exec_proc == true)
+            {
+                  sema_up(&thread_current()->parent->child_loaded);
+            }
+            thread_exit();
+      }
+
+      thread_current()->loaded = true;
       if (thread_current()->parent->exec_proc == true)
       {
             sema_up(&thread_current()->parent->child_loaded);
       }
 
-      /* If load failed, quit. */
-      palloc_free_page(file_name);
-      if (!success)
-      {
-            thread_exit();
-      }
-
-      thread_current()->loaded = true;
       if (DEBUG)
       {
             printf("##starting process : %p\n", if_.esp);
@@ -118,41 +137,21 @@ start_process(void *file_name_)
 int process_wait(tid_t child_tid UNUSED)
 {
       int exit_status = -1;
-      if (DEBUGw)
-            printf("##process wait\n");
-      bool is_child = false;
       struct thread *parent = thread_current();
       struct list *children = &parent->children;
-      struct thread_child *child;
-      int j = 1;
-      if (DEBUGw)
-            printf("##child id to be found : %d\n", child_tid);
-      for (struct list_elem *e = list_begin(children); e != list_end(children);
-           e = list_next(e))
-      {
-            struct thread_child *f = list_entry(e, struct thread_child, child_elem);
-            if (f != NULL && f->tid == child_tid)
-            {
-                  if (DEBUGw)
-                        printf("##thread %p , id : %d is the child to wait\n", f, f->tid);
-                  is_child = true;
-                  child = f;
-                  break;
-            }
-            j++;
-      }
+      struct thread_child *child = get_thread_child(child_tid);
+      bool is_child = child != NULL;
+
       if (!is_child)
             return exit_status;
+
       list_remove(&child->child_elem);
+
       if (child->status != THREAD_DYING)
       {
-            if (DEBUGw)
-                  printf("##%s is waiting %d\n", parent->name, child->tid);
             sema_down(&thread_current()->wait_child);
       }
 
-      if (DEBUGw)
-            printf("##%s continue\n", parent->name);
       exit_status = child->exit_status;
       palloc_free_page(child);
       return exit_status;
@@ -187,7 +186,6 @@ void process_exit(void)
       {
             sema_up(&cur->parent->wait_child);
       }
-      if(DEBUGw) printf("sema up\n");
 }
 
 /* Sets up the CPU for running user code in the current
@@ -518,14 +516,12 @@ setup_stack(void **esp, char *cmd_line)
       int cnt = 0;
       int ln = 0;
       char *stack = (char *)*esp;
-      //char x[] = "/bin/ls -l foo bar";
       for (token = strtok_r(cmd_line, " ", &save_ptr); token != NULL && cnt < 50;
            token = strtok_r(NULL, " ", &save_ptr))
       {
             tokens[cnt++] = token;
       }
 
-      //if(DEBUG)printf("##%x\n",stack);
       for (int i = cnt - 1; i >= 0; i--)
       {
             int len = strlen(tokens[i]) + 1;

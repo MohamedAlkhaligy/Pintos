@@ -15,12 +15,11 @@
 
 #define DEBUG false
 
-
-static int
-get_user(const uint8_t *uaddr);
-
-static bool
-put_user(uint8_t *udst, uint8_t byte);
+static int get_user(const uint8_t *uaddr);
+static bool put_user(uint8_t *udst, uint8_t byte);
+static bool check_string(const void *from);
+static bool writeUserAccess(const void *to, int length, const void *from);
+static bool readUserAccess(const void *from, int length, const void *to);
 
 static void syscall_handler(struct intr_frame *);
 void halt(void);
@@ -54,10 +53,12 @@ syscall_handler(struct intr_frame *f UNUSED)
             printf("syscode %p\n", f->esp);
       if (DEBUG)
             printf("syscode %d\n", *(int *)f->esp);
+      
       if (f->esp == NULL || !is_user_vaddr(f->esp) || get_user(f->esp) == -1)
       {
             exit(-1);
       }
+
       int sys_code = *(int *)f->esp;
       switch (*(int *)f->esp)
       {
@@ -70,7 +71,7 @@ syscall_handler(struct intr_frame *f UNUSED)
       {
             if (DEBUG)
                   printf("enter exit system call\n");
-            int status = *((int *)f->esp + 1);
+            int status = (int *)f->esp + 1 >= PHYS_BASE?-1: *((int *)f->esp + 1);
             exit(status);
             break;
       }
@@ -80,6 +81,8 @@ syscall_handler(struct intr_frame *f UNUSED)
                   printf("enter exec system call\n");
             char *cmd_line = *((char **)f->esp + 1);
             f->eax = exec(cmd_line);
+            if (DEBUG)
+                  printf("exit exec system call\n");
             break;
       }
       case SYS_WAIT:
@@ -96,7 +99,7 @@ syscall_handler(struct intr_frame *f UNUSED)
                   printf("enter create file system call\n");
             char *name = (char *)(*((char *)f->esp + 1));
             if (DEBUG)
-                  printf("name: %x\n", name);
+                  printf("name: %s\n", name);
             unsigned size = *((unsigned *)f->esp + 2);
             if (DEBUG)
                   printf("size: %dl\n", size);
@@ -127,10 +130,10 @@ syscall_handler(struct intr_frame *f UNUSED)
                   printf("fd: %d\n", fd);
             void *buffer = (void *)(*((int *)f->esp + 2));
             if (DEBUG)
-                  printf("buffer: %x\n", buffer);
+                  printf("buffer: %p\n", buffer);
             unsigned size = *((unsigned *)f->esp + 3);
             if (DEBUG)
-                  printf("size: %dl\n", size);
+                  printf("size: %d\n", size);
             //run the syscall, a function of your own making
             //since this syscall returns a value, the return value should be stored in f->eax
             f->eax = read(fd, buffer, size);
@@ -145,7 +148,7 @@ syscall_handler(struct intr_frame *f UNUSED)
                   printf("fd: %d\n", fd);
             void *buffer = (void *)(*((int *)f->esp + 2));
             if (DEBUG)
-                  printf("buffer: %x\n", buffer);
+                  printf("buffer: %p\n", buffer);
             unsigned size = *((unsigned *)f->esp + 3);
             if (DEBUG)
                   printf("size: %dl\n", size);
@@ -196,13 +199,15 @@ process cannot return from the exec until it knows whether the child process suc
 loaded its executable. You must use appropriate synchronization to ensure this.*/
 pid_t exec(const char *cmd_line)
 {
+
       if (cmd_line != NULL)
       {
+            
             pid_t child_id = process_execute(cmd_line);
             thread_current()->exec_proc = true;
             sema_down(&thread_current()->child_loaded);
-
-            return thread_current()->loaded ? child_id : -1;
+            if(DEBUG)printf("loaded %d\n",thread_current()->loaded);
+            return thread_current()->loaded == true ? child_id : - 1;
       }
       return -1;
 }
@@ -224,7 +229,7 @@ int wait(pid_t pid)
 bool create(const char *file, unsigned initial_size)
 {
       int result = false;
-      if (file != NULL)
+      if (file != NULL )
       {
             lock_acquire(&file_lock);
             result = filesys_create(file, initial_size);
@@ -297,6 +302,7 @@ int write(int fd, const void *buffer, unsigned size)
       {
             if (DEBUG)
                   printf("enter write system call\n");
+
             lock_acquire(&file_lock);
             char *start = buffer;
             putbuf(buffer, size);
@@ -311,9 +317,6 @@ int write(int fd, const void *buffer, unsigned size)
 void seek(int fd, unsigned position) {}
 unsigned tell(int fd) {}
 void close(int fd) {}
-
-
-
 
 /* Reads a byte at user virtual address UADDR.
 UADDR must be below PHYS_BASE.
@@ -342,21 +345,25 @@ put_user(uint8_t *udst, uint8_t byte)
       return error_code != -1;
 }
 
-
 /** read **/
 static bool
 readUserAccess(const void *from, int length, const void *to)
 {
-      if (from < PHYS_BASE && (from + length) < PHYS_BASE)
+      if(DEBUG)printf("from %p\n",from );
+      if(DEBUG)printf("from + length: %p , from: %p ,length :%d\n",((char*)from + length),from,length);
+      if (from < PHYS_BASE && ((char*)from + length) < PHYS_BASE)
       {
+            
             for (int i = 0; i < length; i++)
             {
                   if (get_user((uint8_t *)from + i) == -1)
                   {
                         return false;
                   }
-                  *((uint8_t *)to + i) = (uint8_t)get_user((uint8_t)from + i);
+                   if(DEBUG)printf("from %p\n",(uint8_t*)from + i );
+                  *((uint8_t *)to + i) = (uint8_t)get_user((uint8_t*)from + i);
             }
+            if(DEBUG)printf("%d \n",*(uint32_t*)to);
             return true;
       }
       else
@@ -369,7 +376,7 @@ readUserAccess(const void *from, int length, const void *to)
 static bool
 writeUserAccess(const void *to, int length, const void *from)
 {
-      if (to < PHYS_BASE && (to + length) < PHYS_BASE)
+      if (to < PHYS_BASE && ((char*)to + length) < PHYS_BASE)
       {
             for (int i = 0; i < length; i++)
             {

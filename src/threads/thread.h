@@ -26,8 +26,8 @@ typedef int tid_t;
 #define PRI_MAX 63                      /* Highest priority. */
 
 
-/*
-
+/* Any info the parent would be want to access after its 
+   child die passed here.
  */
 struct thread_child{
   tid_t tid;
@@ -169,5 +169,7 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+struct thread_child * get_thread_child(tid_t tid);
 
 #endif /* threads/thread.h */
