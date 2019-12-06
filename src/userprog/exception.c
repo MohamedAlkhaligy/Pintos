@@ -151,7 +151,7 @@ page_fault(struct intr_frame *f)
    write = (f->error_code & PF_W) != 0;
    user = (f->error_code & PF_U) != 0;
    if(DEBUG){
-      printf("User %d, fault address %p, code segment %p\n",user,fault_addr,f->cs);
+      printf("User %d, fault address %p, code segment %d\n",user,fault_addr,f->cs);
    }
 
    if (is_kernel_vaddr(fault_addr) || fault_addr <= PHYS_BOUND 

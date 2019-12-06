@@ -6,20 +6,27 @@
 #include "pagedir.h"
 #include <console.h>
 #include <string.h>
+#include <stdio.h>
 
 #include "userprog/process.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h"
 
 #include "filesys/filesys.h"
 #include "filesys/file.h"
 
 #define DEBUG false
+#define DEBUGF false
 
 static int get_user(const uint8_t *uaddr);
 static bool put_user(uint8_t *udst, uint8_t byte);
 static bool check_string(const void *from);
 static bool writeUserAccess(const void *to, int length, const void *from);
 static bool readUserAccess(const void *from, int length, const void *to);
+
+struct file_descriptor *get_file_descriptor(struct thread *t, size_t fd);
+static bool check_validation_boundry(char *add, int length);
+static bool check_valid_fd(int fd);
 
 static void syscall_handler(struct intr_frame *);
 void halt(void);
@@ -47,13 +54,6 @@ void syscall_init(void)
 static void
 syscall_handler(struct intr_frame *f UNUSED)
 {
-      if (DEBUG)
-            printf("enter syscall handler\n");
-      if (DEBUG)
-            printf("syscode %p\n", f->esp);
-      if (DEBUG)
-            printf("syscode %d\n", *(int *)f->esp);
-      
       if (f->esp == NULL || !is_user_vaddr(f->esp) || get_user(f->esp) == -1)
       {
             exit(-1);
@@ -69,104 +69,82 @@ syscall_handler(struct intr_frame *f UNUSED)
       }
       case SYS_EXIT:
       {
-            if (DEBUG)
-                  printf("enter exit system call\n");
-            int status = (int *)f->esp + 1 >= PHYS_BASE?-1: *((int *)f->esp + 1);
+            int status = (int *)f->esp + 1 >= PHYS_BASE ? -1 : *((int *)f->esp + 1);
             exit(status);
             break;
       }
       case SYS_EXEC:
       {
-            if (DEBUG)
-                  printf("enter exec system call\n");
             char *cmd_line = *((char **)f->esp + 1);
             f->eax = exec(cmd_line);
-            if (DEBUG)
-                  printf("exit exec system call\n");
             break;
       }
       case SYS_WAIT:
       {
-            if (DEBUG)
-                  printf("enter wait system call\n");
             pid_t child_id = *((pid_t *)f->esp + 1);
             f->eax = wait(child_id);
             break;
       }
       case SYS_CREATE:
       {
-            if (DEBUG)
-                  printf("enter create file system call\n");
-            char *name = (char *)(*((char *)f->esp + 1));
-            if (DEBUG)
-                  printf("name: %s\n", name);
+            char *name = *((char **)f->esp + 1);
             unsigned size = *((unsigned *)f->esp + 2);
-            if (DEBUG)
-                  printf("size: %dl\n", size);
-            //run the syscall, a function of your own making
-            //since this syscall returns a value, the return value should be stored in f->eax
             f->eax = create(name, size);
             break;
       }
 
       case SYS_REMOVE:
       {
+            char *name = *((char **)f->esp + 1);
+            f->eax = remove(name);
             break;
       }
       case SYS_OPEN:
       {
+            char *name = *((char **)f->esp + 1);
+            f->eax = open(name);
             break;
       }
       case SYS_FILESIZE:
       {
+            int fd = *((int *)f->esp + 1);
+            f->eax = filesize(fd);
+
             break;
       }
       case SYS_READ:
       {
-            if (DEBUG)
-                  printf("enter read system call\n");
             int fd = *((int *)f->esp + 1);
-            if (DEBUG)
-                  printf("fd: %d\n", fd);
             void *buffer = (void *)(*((int *)f->esp + 2));
-            if (DEBUG)
-                  printf("buffer: %p\n", buffer);
             unsigned size = *((unsigned *)f->esp + 3);
-            if (DEBUG)
-                  printf("size: %d\n", size);
-            //run the syscall, a function of your own making
-            //since this syscall returns a value, the return value should be stored in f->eax
             f->eax = read(fd, buffer, size);
             break;
       }
       case SYS_WRITE:
       {
-            if (DEBUG)
-                  printf("enter write system call\n");
             int fd = *((int *)f->esp + 1);
-            if (DEBUG)
-                  printf("fd: %d\n", fd);
             void *buffer = (void *)(*((int *)f->esp + 2));
-            if (DEBUG)
-                  printf("buffer: %p\n", buffer);
             unsigned size = *((unsigned *)f->esp + 3);
-            if (DEBUG)
-                  printf("size: %dl\n", size);
-            //run the syscall, a function of your own making
-            //since this syscall returns a value, the return value should be stored in f->eax
             f->eax = write(fd, buffer, size);
             break;
       }
       case SYS_SEEK:
       {
+            int fd = *((int *)f->esp + 1);
+            int position = *((int *)f->esp + 2);
+            seek(fd, position);
             break;
       }
       case SYS_TELL:
       {
+            int fd = *((int *)f->esp + 1);
+            f->eax = tell(fd);
             break;
       }
       case SYS_CLOSE:
       {
+            int fd = *((int *)f->esp + 1);
+            close(fd);
             break;
       }
       }
@@ -184,8 +162,6 @@ waits for it (see below), this is the status that will be returned. Conventional
 indicates success and nonzero values indicate errors.*/
 void exit(int status)
 {
-      if (DEBUG)
-            printf("enter exit system call\n");
       struct thread *current = thread_current();
       current->exit_status = status;
 
@@ -202,12 +178,13 @@ pid_t exec(const char *cmd_line)
 
       if (cmd_line != NULL)
       {
-            
+            lock_acquire(&file_lock);
             pid_t child_id = process_execute(cmd_line);
+            lock_release(&file_lock);
             thread_current()->exec_proc = true;
             sema_down(&thread_current()->child_loaded);
-            if(DEBUG)printf("loaded %d\n",thread_current()->loaded);
-            return thread_current()->loaded == true ? child_id : - 1;
+            thread_current()->exec_proc = false;
+            return thread_current()->loaded == true ? child_id : -1;
       }
       return -1;
 }
@@ -226,10 +203,14 @@ int wait(pid_t pid)
       return status;
 }
 
+/* Creates a new file called file initially initial size bytes in size. Returns true if successful,
+   false otherwise. Creating a new file does not open it: opening the new file is
+   a separate operation which would require a open system call*/
+
 bool create(const char *file, unsigned initial_size)
 {
       int result = false;
-      if (file != NULL )
+      if (file != NULL && check_validation_boundry(file, strlen(file)) && initial_size >= 0)
       {
             lock_acquire(&file_lock);
             result = filesys_create(file, initial_size);
@@ -242,17 +223,77 @@ bool create(const char *file, unsigned initial_size)
       return result;
 }
 
+/* Deletes the file called file. Returns true if successful, false otherwise. A file may be
+   removed regardless of whether it is open or closed, and removing an open file does
+   not close it*/
 bool remove(const char *file)
 {
-
+      int result = false;
+      if (file != NULL && check_validation_boundry(file, strlen(file)))
+      {
+            lock_acquire(&file_lock);
+            result = filesys_remove(file);
+            lock_release(&file_lock);
+      }
+      else
+      {
+            exit(-1);
+      }
+      return result;
 }
+/* Opens the file called file. Returns a nonnegative integer handle called a 
+   “file descriptor” (fd), or -1 if the file could not be opened*/
 int open(const char *file)
 {
+      int result = false;
+      if (file != NULL && check_validation_boundry(file, strlen(file)))
+      {
+            struct file *open_file;
+            size_t new_fd;
 
+            lock_acquire(&file_lock);
+            open_file = filesys_open(file);
+            if (open_file != NULL)
+            {
+                  result = true;
+                  new_fd = get_fd(thread_current());
+            }
+            lock_release(&file_lock);
+            if (result)
+            {
+                  struct file_descriptor *fd_file = malloc(sizeof(struct file_descriptor));
+                  fd_file->_file = open_file;
+                  fd_file->fd = new_fd;
+                  list_push_back(&thread_current()->files, &fd_file->fd_elem);
+                  return fd_file->fd;
+            }
+            else
+            {
+                  return -1;
+            }
+      }
+      else
+      {
+            exit(-1);
+      }
 }
+
+/* Returns the size, in bytes, of the file open as fd. */
 int filesize(int fd)
 {
-
+      if (check_valid_fd(fd))
+      {
+            struct file_descriptor *fd_file = get_file_descriptor(thread_current(), fd);
+            if (fd_file != NULL)
+            {
+                  int res;
+                  lock_acquire(&file_lock);
+                  res = file_length(fd_file->_file);
+                  lock_release(&file_lock);
+                  return res;
+            }
+      }
+      return -1;
 }
 
 /*
@@ -262,7 +303,12 @@ other than end of file). Fd 0 reads from the keyboard using input_getc().
 */
 int read(int fd, void *buffer, unsigned size)
 {
-
+      if(!check_validation_boundry(buffer,size)){
+            exit(-1);
+      }
+      if(fd == 1){//stdout 
+            return -1;
+      }
       if (fd == 0)
       {
             if (DEBUG)
@@ -277,11 +323,26 @@ int read(int fd, void *buffer, unsigned size)
                   if (input == NULL)
                         break;
             }
-
             char *end = buffer;
             lock_release(&file_lock);
             return end - start;
       }
+      else
+      {
+            if (check_valid_fd(fd) && size >= 0)
+            {
+                  struct file_descriptor *fd_file = get_file_descriptor(thread_current(), fd);
+                  if (fd_file != NULL)
+                  {
+                        int res;
+                        lock_acquire(&file_lock);
+                        res = file_read(fd_file->_file, buffer, size);
+                        lock_release(&file_lock);
+                        return res;
+                  }
+            }
+      }
+
       return -1;
 }
 /*Writes size bytes from buffer to the open file fd. Returns the number of bytes actually 
@@ -297,7 +358,12 @@ scripts.*/
 
 int write(int fd, const void *buffer, unsigned size)
 {
-
+      if(!check_validation_boundry(buffer,size)){
+            exit(-1);
+      }
+      if(fd == 0){ //stdin 
+            return 0;
+      }
       if (fd == 1)
       {
             if (DEBUG)
@@ -312,11 +378,112 @@ int write(int fd, const void *buffer, unsigned size)
                   printf("put in buffer\n");
             return end - start;
       }
+      else
+      {
+            if (check_valid_fd(fd) && size >= 0 )
+            {
+                  struct file_descriptor *fd_file = get_file_descriptor(thread_current(), fd);
+                  if (fd_file != NULL)
+                  {
+                        int res;
+                        lock_acquire(&file_lock);
+                        res = file_write(fd_file->_file, buffer, size);
+                        lock_release(&file_lock);
+                        return res;
+                  }
+            }
+      }
       return -1;
 }
-void seek(int fd, unsigned position) {}
-unsigned tell(int fd) {}
-void close(int fd) {}
+/* Changes the next byte to be read or written in open file fd to position, expressed in
+   bytes from the beginning of the file. (Thus, a position of 0 is the file’s start.)*/
+void seek(int fd, unsigned position)
+{
+      if (check_valid_fd(fd) && position >= 0)
+      {
+            struct file_descriptor *fd_file = get_file_descriptor(thread_current(), fd);
+            if (fd_file != NULL)
+            {
+                  int res;
+                  lock_acquire(&file_lock);
+                  file_seek(fd_file->_file, position);
+                  lock_release(&file_lock);
+            }
+      }
+}
+/*Returns the position of the next byte to be read or written in open file fd, expressed
+  in bytes from the beginning of the file.*/
+unsigned tell(int fd)
+{
+      if (check_valid_fd(fd))
+      {
+            struct file_descriptor *fd_file = get_file_descriptor(thread_current(), fd);
+            if (fd_file != NULL)
+            {
+                  unsigned res;
+                  lock_acquire(&file_lock);
+                  res = file_tell(fd_file->_file);
+                  lock_release(&file_lock);
+                  return res;
+            }
+      }
+      return 0;
+}
+
+/* Closes file descriptor fd. Exiting or terminating a process implicitly closes all its open
+   file descriptors, as if by calling this function for each one.*/
+void close(int fd)
+{
+      if (fd == 0 || fd == 1)
+      {
+            exit(-1);
+      }
+      if (check_valid_fd(fd))
+      {
+            struct file_descriptor *fd_file = get_file_descriptor(thread_current(), fd);
+            if (fd_file != NULL)
+            {
+                  
+                  lock_acquire(&file_lock);
+                  file_close(fd_file->_file);
+                  lock_release(&file_lock);
+                  list_remove(&fd_file->fd_elem);
+                  
+            }
+      }
+}
+
+static bool check_validation_boundry(char *add, int length)
+{
+
+      if (is_user_vaddr(add) && is_user_vaddr(add + length) && add > PHYS_BOUND && (add + length) >PHYS_BOUND)
+      {
+            return true;
+      }
+      return false;
+}
+
+struct file_descriptor *get_file_descriptor(struct thread *t, size_t fd)
+{
+      struct list *children = &thread_current()->files;
+      for (struct list_elem *e = list_begin(children); e != list_end(children);
+           e = list_next(e))
+      {
+            struct file_descriptor *f = list_entry(e, struct file_descriptor, fd_elem);
+            if (f != NULL && f->fd == fd)
+            {
+                  if (DEBUG)
+                        printf("##thread %p , id : %d is the child to wait\n", f, f->fd);
+                  return f;
+            }
+      }
+      return NULL;
+}
+
+static bool check_valid_fd(int fd)
+{
+      return !((fd < 2) || (fd >= thread_current()->fd_counter));
+}
 
 /* Reads a byte at user virtual address UADDR.
 UADDR must be below PHYS_BASE.
@@ -349,26 +516,15 @@ put_user(uint8_t *udst, uint8_t byte)
 static bool
 readUserAccess(const void *from, int length, const void *to)
 {
-      if(DEBUG)printf("from %p\n",from );
-      if(DEBUG)printf("from + length: %p , from: %p ,length :%d\n",((char*)from + length),from,length);
-      if (from < PHYS_BASE && ((char*)from + length) < PHYS_BASE)
+      for (int i = 0; i < length; i++)
       {
-            
-            for (int i = 0; i < length; i++)
+            if (get_user((uint8_t *)from + i) == -1)
             {
-                  if (get_user((uint8_t *)from + i) == -1)
-                  {
-                        return false;
-                  }
-                   if(DEBUG)printf("from %p\n",(uint8_t*)from + i );
-                  *((uint8_t *)to + i) = (uint8_t)get_user((uint8_t*)from + i);
+                  return false;
             }
-            if(DEBUG)printf("%d \n",*(uint32_t*)to);
-            return true;
-      }
-      else
-      {
-            return false;
+            if (DEBUG)
+                  printf("from %p\n", (uint8_t *)from + i);
+            *((uint8_t *)to + i) = (uint8_t)get_user((uint8_t *)from + i);
       }
 }
 
@@ -376,48 +532,32 @@ readUserAccess(const void *from, int length, const void *to)
 static bool
 writeUserAccess(const void *to, int length, const void *from)
 {
-      if (to < PHYS_BASE && ((char*)to + length) < PHYS_BASE)
+
+      for (int i = 0; i < length; i++)
       {
-            for (int i = 0; i < length; i++)
+            if (put_user((uint8_t *)to + i, (uint8_t *)from + i) == -1)
             {
-                  if (put_user((uint8_t *)to + i, (uint8_t *)from + i) == -1)
-                  {
-                        return false;
-                  }
+                  return false;
             }
-            return true;
       }
-      else
-      {
-            return false;
-      }
+      return true;
 }
 
 /** check if from is string or not **/
 static bool
 check_string(const void *from)
 {
-      if (from < PHYS_BASE)
+
+      char ch;
+      int i = 0;
+      while (ch != '\0')
       {
-            char ch;
-            int i = 0;
-            while (ch != '\0')
+            if (get_user((uint8_t *)from + i) == -1)
             {
-                  if ((from + i) >= PHYS_BASE)
-                  {
-                        return false;
-                  }
-                  if (get_user((uint8_t *)from + i) == -1)
-                  {
-                        return false;
-                  }
-                  ch = get_user((uint8_t *)from + i);
-                  i++;
+                  return false;
             }
-            return true;
+            ch = get_user((uint8_t *)from + i);
+            i++;
       }
-      else
-      {
-            return false;
-      }
+      return true;
 }

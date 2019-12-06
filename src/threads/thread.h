@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include <threads/synch.h>
+#include "filesys/file.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -34,6 +35,15 @@ struct thread_child{
   int exit_status;
   enum thread_status status;
   struct list_elem child_elem;
+};
+
+
+/* File descriptor struct */
+struct file_descriptor{
+
+  int fd;
+  struct file * _file;
+  struct list_elem fd_elem;
 };
 
 /* A kernel thread or user process.
@@ -104,21 +114,25 @@ struct thread
     int64_t  sleep_ticks;				        /* How long the thread sleeps. */
 
 
-    struct thread * parent;
-    struct semaphore  wait_child;
+    struct thread * parent;             /* Parent Pointer */
+    struct semaphore  wait_child;       /* Thread waits its child until his child sema up him -wait syscall- */
 
-    struct list_elem elem_child;
+    //struct list_elem elem_child;
 
-    /* exec system call helper members*/
-    bool exec_proc;
-    bool loaded;
-    struct semaphore child_loaded;
+    /* exec system call helper members */
+    bool exec_proc;                     /* Is this thread must be sema up by an child,which called by an exec syscall*/
+    bool loaded;                        /* Is the child, which called by an exec syscall, is loaded or not*/
+    struct semaphore child_loaded;      /* Thread waits its child until his child sema up him -exec syscall-*/
 
-    int exit_status;
+    int exit_status;                    /* The exit status the set in exit syscall, -1 if kernel terminates it */ 
 
-    struct list children;
+    struct list children;               /* List of the children of this process */
 
     struct thread_child* child_info;    /* Info for waiting parent. */ 
+
+    struct list files;                  /* The currently open files*/
+    size_t fd_counter;                  /* The file descriptor counter to allocate distinct fd for any new open file */
+
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
@@ -132,6 +146,10 @@ struct thread
     unsigned magic;                     /* Detects stack overflow. */
   };
 
+
+static size_t get_fd(struct thread * t){
+      return t->fd_counter++;
+}
 
 
 /* If false (default), use round-robin scheduler.

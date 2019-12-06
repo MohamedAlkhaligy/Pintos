@@ -72,6 +72,7 @@ static void schedule(void);
 void thread_schedule_tail(struct thread *prev);
 static tid_t allocate_tid(void);
 
+
 /*initialize the thread_child member in child for parent purposes*/
 static void init_thread_child(struct thread_child * tdchild, struct thread * t);
 
@@ -200,14 +201,14 @@ tid_t thread_create(const char *name, int priority,
       sf->ebp = 0;
 
 
-      //############
+      //save pointer to parent
       t->parent = thread_current();
 
+      /*thread child info for parent access*/
       tdchild = palloc_get_page(PAL_USER|PAL_ZERO);
       init_thread_child(tdchild,t);
       list_push_back(&t->parent->children, &tdchild->child_elem);
       t->child_info = tdchild;
-      //$$$$$$$$$$$$
 
       /* Add to run queue. */
       thread_unblock(t);
@@ -293,18 +294,14 @@ tid_t thread_tid(void)
    returns to the caller. */
 void thread_exit(void)
 {
-      if(DEBUG) printf("Enter thread exit\n");
       ASSERT(!intr_context());
       struct thread_child* tdchild = thread_current()->child_info;
-      if(DEBUG) printf("get tdchild\n");
 #ifdef USERPROG
       process_exit();
 #endif
 
-      if(DEBUG) printf("process_exit() executed\n");
       tdchild->exit_status = thread_current()->exit_status;
       tdchild->status = THREAD_DYING;
-      if(DEBUG) printf("tdchild set values\n");
       /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
@@ -486,6 +483,10 @@ init_thread(struct thread *t, const char *name, int priority)
       t->loaded = false;
       list_init(&t->children);
 
+      list_init(&t->files);
+      t->fd_counter = 2;    /* 0, 1 reserved for stdin, stdout */
+
+
       old_level = intr_disable();
       list_push_back(&all_list, &t->allelem);
       intr_set_level(old_level);
@@ -616,8 +617,6 @@ struct thread_child * get_thread_child(tid_t tid){
             struct thread_child *f = list_entry(e, struct thread_child, child_elem);
             if (f != NULL && f->tid == tid)
             {
-                  if (DEBUG)
-                        printf("##thread %p , id : %d is the child to wait\n", f, f->tid);
                   return f;
 
             }
@@ -625,3 +624,5 @@ struct thread_child * get_thread_child(tid_t tid){
       return NULL;
 
 }
+
+

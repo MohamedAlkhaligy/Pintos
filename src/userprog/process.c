@@ -8,6 +8,8 @@
 #include "userprog/gdt.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
+#include "userprog/syscall.h"
+
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
@@ -17,6 +19,7 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/synch.h"
 
 #include <list.h>
 
@@ -25,6 +28,8 @@
 
 static thread_func start_process NO_RETURN;
 static bool load(const char *cmdline, void (**eip)(void), void **esp);
+
+void close_files(struct thread* t);
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -180,14 +185,28 @@ void process_exit(void)
             pagedir_destroy(pd);
       }
 
-      printf("%s: exit(%d)\n", cur->name, cur->exit_status);
+      close_files(cur);
 
+      printf("%s: exit(%d)\n", cur->name, cur->exit_status);
       if (cur->parent != NULL && cur->parent->wait_child.value <= 0)
       {
             sema_up(&cur->parent->wait_child);
       }
 }
 
+/* CLose files before terminating the process */
+void close_files(struct thread* t){
+      struct list *children = &thread_current()->files;
+      for (struct list_elem *e = list_begin(children); e != list_end(children);
+           e = list_next(e))
+      {
+            struct file_descriptor *f = list_entry(e, struct file_descriptor, fd_elem);
+            if (f != NULL)
+            {
+                  close(f->fd);
+            }
+      }
+}
 /* Sets up the CPU for running user code in the current
    thread.
    This function is called on every context switch. */
@@ -301,6 +320,7 @@ bool load(const char *file_name, void (**eip)(void), void **esp)
             printf("load: %s: open failed\n", t->name);
             goto done;
       }
+      file_deny_write(file);
 
       /* Read and verify executable header. */
       if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr || memcmp(ehdr.e_ident, "\177ELF\1\1\1", 7) || ehdr.e_type != 2 || ehdr.e_machine != 3 || ehdr.e_version != 1 || ehdr.e_phentsize != sizeof(struct Elf32_Phdr) || ehdr.e_phnum > 1024)
