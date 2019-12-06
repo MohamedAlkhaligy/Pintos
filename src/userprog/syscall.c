@@ -459,6 +459,7 @@ void close(int fd)
                   file_close(fd_file->_file);
                   lock_release(&file_lock);
                   list_remove(&fd_file->fd_elem);
+                  free(fd_file);
             }
       }
 }
