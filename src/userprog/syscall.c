@@ -21,9 +21,7 @@
 static int get_user(const uint8_t *uaddr);
 static bool put_user(uint8_t *udst, uint8_t byte);
 static bool check_string(const void *from);
-static bool writeUserAccess(const void *to, int length, const void *from);
-static bool readUserAccess(const void *from, int length, const void *to);
-
+static void check_user(const uint8_t *uaddr);
 struct file_descriptor *get_file_descriptor(struct thread *t, size_t fd);
 static bool check_validation_boundry(char *add, int length);
 static bool check_valid_fd(int fd);
@@ -180,10 +178,10 @@ pid_t exec(const char *cmd_line)
       {
             lock_acquire(&file_lock);
             pid_t child_id = process_execute(cmd_line);
-            lock_release(&file_lock);
             thread_current()->exec_proc = true;
             sema_down(&thread_current()->child_loaded);
             thread_current()->exec_proc = false;
+            lock_release(&file_lock);
             return thread_current()->loaded == true ? child_id : -1;
       }
       return -1;
@@ -303,10 +301,12 @@ other than end of file). Fd 0 reads from the keyboard using input_getc().
 */
 int read(int fd, void *buffer, unsigned size)
 {
-      if(!check_validation_boundry(buffer,size)){
+      if (!check_validation_boundry(buffer, size))
+      {
             exit(-1);
       }
-      if(fd == 1){//stdout 
+      if (fd == 1)
+      { //stdout
             return -1;
       }
       if (fd == 0)
@@ -345,6 +345,7 @@ int read(int fd, void *buffer, unsigned size)
 
       return -1;
 }
+
 /*Writes size bytes from buffer to the open file fd. Returns the number of bytes actually 
 written, which may be less than size if some bytes could not be written.
 Writing past end-of-file would normally extend the file, but file growth is not implemented
@@ -358,11 +359,11 @@ scripts.*/
 
 int write(int fd, const void *buffer, unsigned size)
 {
-      if(!check_validation_boundry(buffer,size)){
-            exit(-1);
-      }
-      if(fd == 0){ //stdin 
-            return 0;
+      char *getBuffer = malloc(size + 1);
+
+      if (fd == 0)
+      { //stdin
+            return -1;
       }
       if (fd == 1)
       {
@@ -380,14 +381,24 @@ int write(int fd, const void *buffer, unsigned size)
       }
       else
       {
-            if (check_valid_fd(fd) && size >= 0 )
+            if (!check_validation_boundry(buffer, size))
+            {
+                  exit(-1);
+            }
+            check_user((const uint8_t *)buffer);
+            check_user((const uint8_t *)buffer + size - 1);
+            if (check_valid_fd(fd) && size >= 0)
             {
                   struct file_descriptor *fd_file = get_file_descriptor(thread_current(), fd);
                   if (fd_file != NULL)
                   {
                         int res;
                         lock_acquire(&file_lock);
+                        thread_current()->has_lock_file = true;
+                        thread_current()->file_lock = &file_lock;
                         res = file_write(fd_file->_file, buffer, size);
+                        thread_current()->has_lock_file = false;
+                        thread_current()->file_lock = NULL;
                         lock_release(&file_lock);
                         return res;
                   }
@@ -443,12 +454,11 @@ void close(int fd)
             struct file_descriptor *fd_file = get_file_descriptor(thread_current(), fd);
             if (fd_file != NULL)
             {
-                  
+
                   lock_acquire(&file_lock);
                   file_close(fd_file->_file);
                   lock_release(&file_lock);
                   list_remove(&fd_file->fd_elem);
-                  
             }
       }
 }
@@ -456,7 +466,7 @@ void close(int fd)
 static bool check_validation_boundry(char *add, int length)
 {
 
-      if (is_user_vaddr(add) && is_user_vaddr(add + length) && add > PHYS_BOUND && (add + length) >PHYS_BOUND)
+      if (is_user_vaddr(add) && is_user_vaddr(add + length) && add > PHYS_BOUND && (add + length) > PHYS_BOUND)
       {
             return true;
       }
@@ -512,52 +522,10 @@ put_user(uint8_t *udst, uint8_t byte)
       return error_code != -1;
 }
 
-/** read **/
-static bool
-readUserAccess(const void *from, int length, const void *to)
+static void
+check_user(const uint8_t *uaddr)
 {
-      for (int i = 0; i < length; i++)
-      {
-            if (get_user((uint8_t *)from + i) == -1)
-            {
-                  return false;
-            }
-            if (DEBUG)
-                  printf("from %p\n", (uint8_t *)from + i);
-            *((uint8_t *)to + i) = (uint8_t)get_user((uint8_t *)from + i);
-      }
-}
-
-/*** write **/
-static bool
-writeUserAccess(const void *to, int length, const void *from)
-{
-
-      for (int i = 0; i < length; i++)
-      {
-            if (put_user((uint8_t *)to + i, (uint8_t *)from + i) == -1)
-            {
-                  return false;
-            }
-      }
-      return true;
-}
-
-/** check if from is string or not **/
-static bool
-check_string(const void *from)
-{
-
-      char ch;
-      int i = 0;
-      while (ch != '\0')
-      {
-            if (get_user((uint8_t *)from + i) == -1)
-            {
-                  return false;
-            }
-            ch = get_user((uint8_t *)from + i);
-            i++;
-      }
-      return true;
+      // check uaddr range or segfaults
+      if (get_user(uaddr) == -1)
+            exit(-1);
 }

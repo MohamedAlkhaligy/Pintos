@@ -106,7 +106,7 @@ start_process(void *file_name_)
             thread_exit();
       }
 
-      thread_current()->loaded = true;
+      thread_current()->parent->loaded = true;
       if (thread_current()->parent->exec_proc == true)
       {
             sema_up(&thread_current()->parent->child_loaded);
@@ -150,12 +150,18 @@ int process_wait(tid_t child_tid UNUSED)
       if (!is_child)
             return exit_status;
 
-      list_remove(&child->child_elem);
+      if(child->waiting){
+            return -1;
+      }else{
+            child->waiting = true;
+      }
 
       if (child->status != THREAD_DYING)
       {
-            sema_down(&thread_current()->wait_child);
+            sema_down(&child->wait_child);
       }
+
+      list_remove(&child->child_elem);
 
       exit_status = child->exit_status;
       palloc_free_page(child);
@@ -188,9 +194,17 @@ void process_exit(void)
       close_files(cur);
 
       printf("%s: exit(%d)\n", cur->name, cur->exit_status);
-      if (cur->parent != NULL && cur->parent->wait_child.value <= 0)
+      if(cur->has_lock_file){
+            cur->has_lock_file = false;
+            lock_release(cur->file_lock);
+      }
+      if(cur->file_executing!= NULL) {
+            file_allow_write(cur->file_executing);
+            file_close(cur->file_executing);
+       }
+      if (cur->parent != NULL && cur->child_info->wait_child.value <= 0)
       {
-            sema_up(&cur->parent->wait_child);
+            sema_up(&cur->child_info->wait_child);
       }
 }
 
@@ -395,9 +409,13 @@ bool load(const char *file_name, void (**eip)(void), void **esp)
 
       success = true;
 
+      /* Deny writes to executables. */
+       file_deny_write (file);
+      thread_current()->file_executing = file;
+
 done:
       /* We arrive here whether the load is successful or not. */
-      file_close(file);
+     // file_close(file);
       return success;
 }
 

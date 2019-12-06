@@ -221,6 +221,8 @@ static void init_thread_child(struct thread_child * tdchild, struct thread * t){
       tdchild->tid = t->tid;
       tdchild->exit_status = -1;
       tdchild->status= THREAD_READY;
+      tdchild->waiting = false;
+      sema_init(&tdchild->wait_child, 0);
 }
 /* Puts the current thread to sleep.  It will not be scheduled
    again until awoken by thread_unblock().
@@ -477,7 +479,7 @@ init_thread(struct thread *t, const char *name, int priority)
       t->magic = THREAD_MAGIC;
 
       t->exit_status = -1;
-      sema_init(&t->wait_child, 0);
+      //sema_init(&t->wait_child, 0);
       sema_init(&t->child_loaded, 0);
       t->exec_proc = false;
       t->loaded = false;
@@ -486,6 +488,7 @@ init_thread(struct thread *t, const char *name, int priority)
       list_init(&t->files);
       t->fd_counter = 2;    /* 0, 1 reserved for stdin, stdout */
 
+      t->has_lock_file = false;
 
       old_level = intr_disable();
       list_push_back(&all_list, &t->allelem);

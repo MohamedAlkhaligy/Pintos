@@ -33,8 +33,11 @@ typedef int tid_t;
 struct thread_child{
   tid_t tid;
   int exit_status;
+  bool waiting;
   enum thread_status status;
   struct list_elem child_elem;
+
+   struct semaphore  wait_child;       /* Thread waits its child until his child sema up him -wait syscall- */
 };
 
 
@@ -115,7 +118,7 @@ struct thread
 
 
     struct thread * parent;             /* Parent Pointer */
-    struct semaphore  wait_child;       /* Thread waits its child until his child sema up him -wait syscall- */
+   
 
     //struct list_elem elem_child;
 
@@ -132,6 +135,11 @@ struct thread
 
     struct list files;                  /* The currently open files*/
     size_t fd_counter;                  /* The file descriptor counter to allocate distinct fd for any new open file */
+
+    bool has_lock_file;
+    struct lock * file_lock;
+
+    struct file * file_executing;
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
