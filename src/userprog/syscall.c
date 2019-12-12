@@ -176,6 +176,7 @@ pid_t exec(const char *cmd_line)
 
       if (cmd_line != NULL)
       {
+            check_user((const uint8_t *)cmd_line);
             lock_acquire(&file_lock);
             pid_t child_id = process_execute(cmd_line);
             thread_current()->exec_proc = true;

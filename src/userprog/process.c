@@ -156,12 +156,13 @@ int process_wait(tid_t child_tid UNUSED)
             child->waiting = true;
       }
 
+      list_remove(&child->child_elem);
       if (child->status != THREAD_DYING)
       {
+            // printf("%d wait %d\n", parent->tid, child_tid);
             sema_down(&child->wait_child);
       }
 
-      list_remove(&child->child_elem);
 
       exit_status = child->exit_status;
       palloc_free_page(child);
